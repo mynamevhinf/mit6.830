@@ -9,6 +9,9 @@ public class Filter extends Operator {
 
     private static final long serialVersionUID = 1L;
 
+    Predicate predicate;
+    OpIterator[] childs;
+
     /**
      * Constructor accepts a predicate to apply and a child operator to read
      * tuples to filter from.
@@ -19,30 +22,31 @@ public class Filter extends Operator {
      *            The child operator
      */
     public Filter(Predicate p, OpIterator child) {
-        // some code goes here
+        predicate = p;
+        childs = new OpIterator[]{child};
     }
 
     public Predicate getPredicate() {
-        // some code goes here
-        return null;
+        return predicate;
     }
 
     public TupleDesc getTupleDesc() {
-        // some code goes here
-        return null;
+        return childs[0].getTupleDesc();
     }
 
     public void open() throws DbException, NoSuchElementException,
             TransactionAbortedException {
-        // some code goes here
+        super.open();
+        childs[0].open();
     }
 
     public void close() {
-        // some code goes here
+        super.close();
+        childs[0].close();
     }
 
     public void rewind() throws DbException, TransactionAbortedException {
-        // some code goes here
+        childs[0].rewind();
     }
 
     /**
@@ -56,19 +60,26 @@ public class Filter extends Operator {
      */
     protected Tuple fetchNext() throws NoSuchElementException,
             TransactionAbortedException, DbException {
-        // some code goes here
-        return null;
+        Tuple tuple = null;
+        OpIterator child = childs[0];
+        while (child.hasNext()) {
+            tuple = child.next();
+            if (predicate.filter(tuple))
+                break;
+            tuple = null;
+        }
+        return tuple;
     }
 
     @Override
     public OpIterator[] getChildren() {
-        // some code goes here
-        return null;
+        return childs;
     }
 
     @Override
     public void setChildren(OpIterator[] children) {
         // some code goes here
+        childs = children;
     }
 
 }

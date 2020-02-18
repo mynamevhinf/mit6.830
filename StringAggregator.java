@@ -7,6 +7,11 @@ public class StringAggregator implements Aggregator {
 
     private static final long serialVersionUID = 1L;
 
+    Op what;
+    int afield;
+    int gbfield;
+    Type gbfieldtype;
+
     /**
      * Aggregate constructor
      * @param gbfield the 0-based index of the group-by field in the tuple, or NO_GROUPING if there is no grouping
@@ -17,7 +22,10 @@ public class StringAggregator implements Aggregator {
      */
 
     public StringAggregator(int gbfield, Type gbfieldtype, int afield, Op what) {
-        // some code goes here
+        this.gbfield = gbfield;
+        this.gbfieldtype = gbfieldtype;
+        this.afield = afield;
+        this.what = what;
     }
 
     /**

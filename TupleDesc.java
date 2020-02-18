@@ -51,8 +51,8 @@ public class TupleDesc implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
-    private Type[] types;
-    private String[] fieldNames = null;
+    Type[] types;
+    String[] fieldNames = null;
 
     /**
      * Create a new TupleDesc with typeAr.length fields with fields of the
@@ -93,6 +93,14 @@ public class TupleDesc implements Serializable {
 
 
     private boolean validIndex(int i) { return i >= 0 && i < types.length; }
+
+    public String[] getFieldNames() {
+        return fieldNames;
+    }
+
+    public Type[] getTypes() {
+        return types;
+    }
 
     /**
      * Gets the (possibly null) field name of the ith field of this TupleDesc.
