@@ -5,7 +5,6 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * The Catalog keeps track of all available tables in the database and their
@@ -17,6 +16,33 @@ import java.util.concurrent.ConcurrentHashMap;
  * @Threadsafe
  */
 public class Catalog {
+    static class TableMetaInfo {
+        DbFile file;
+        String name;
+        String pKeyField;
+
+        static TableMetaInfo newTableMetaInfo(DbFile file, String name, String pKeyField)
+        {
+            TableMetaInfo tableMetaInfo = new TableMetaInfo();
+            tableMetaInfo.file = file;
+            tableMetaInfo.name = name;
+            tableMetaInfo.pKeyField = pKeyField;
+            return tableMetaInfo;
+        }
+
+        public DbFile getFile() {
+            return file;
+        }
+        public String getpKeyField() {
+            return pKeyField;
+        }
+        public String getName() {
+            return name;
+        }
+    }
+
+    Map<Integer, TableMetaInfo> tableMapById;
+    Map<String, TableMetaInfo> tableMapByName;
 
     /**
      * Constructor.
@@ -24,6 +50,8 @@ public class Catalog {
      */
     public Catalog() {
         // some code goes here
+        tableMapById = new TreeMap<>(Integer::compareTo);
+        tableMapByName = new HashMap<>();
     }
 
     /**
@@ -37,6 +65,13 @@ public class Catalog {
      */
     public void addTable(DbFile file, String name, String pkeyField) {
         // some code goes here
+        TableMetaInfo tableMetaInfo = TableMetaInfo.newTableMetaInfo(file, name, pkeyField);
+        if (tableMapByName.containsKey(name)) {
+            TableMetaInfo exised = tableMapByName.get(name);
+            tableMapById.remove(exised.getFile().getId());
+        }
+        tableMapByName.put(name, tableMetaInfo);
+        tableMapById.put(file.getId(), tableMetaInfo);
     }
 
     public void addTable(DbFile file, String name) {
@@ -60,7 +95,10 @@ public class Catalog {
      */
     public int getTableId(String name) throws NoSuchElementException {
         // some code goes here
-        return 0;
+        TableMetaInfo tableMetaInfo = tableMapByName.get(name);
+        if (tableMetaInfo == null)
+            throw new NoSuchElementException();
+        return tableMetaInfo.getFile().getId();
     }
 
     /**
@@ -70,8 +108,10 @@ public class Catalog {
      * @throws NoSuchElementException if the table doesn't exist
      */
     public TupleDesc getTupleDesc(int tableid) throws NoSuchElementException {
-        // some code goes here
-        return null;
+        TableMetaInfo tableMetaInfo = tableMapById.get(tableid);
+        if (tableMetaInfo == null)
+            throw new NoSuchElementException();
+        return tableMetaInfo.getFile().getTupleDesc();
     }
 
     /**
@@ -81,28 +121,34 @@ public class Catalog {
      *     function passed to addTable
      */
     public DbFile getDatabaseFile(int tableid) throws NoSuchElementException {
-        // some code goes here
-        return null;
+        TableMetaInfo tableMetaInfo = tableMapById.get(tableid);
+        if (tableMetaInfo == null)
+            throw new NoSuchElementException();
+        return tableMetaInfo.getFile();
     }
 
     public String getPrimaryKey(int tableid) {
-        // some code goes here
-        return null;
+        TableMetaInfo tableMetaInfo = tableMapById.get(tableid);
+        if (tableMetaInfo == null)
+            throw new NoSuchElementException();
+        return tableMetaInfo.getpKeyField();
     }
 
     public Iterator<Integer> tableIdIterator() {
-        // some code goes here
-        return null;
+        return tableMapById.keySet().iterator();
     }
 
-    public String getTableName(int id) {
-        // some code goes here
-        return null;
+    public String getTableName(int tableid) {
+        TableMetaInfo tableMetaInfo = tableMapById.get(tableid);
+        if (tableMetaInfo == null)
+            throw new NoSuchElementException();
+        return tableMetaInfo.getName();
     }
     
     /** Delete all tables from the catalog */
     public void clear() {
-        // some code goes here
+        tableMapById.clear();
+        tableMapByName.clear();
     }
     
     /**
@@ -111,7 +157,7 @@ public class Catalog {
      */
     public void loadSchema(String catalogFile) {
         String line = "";
-        String baseFolder=new File(new File(catalogFile).getAbsolutePath()).getParent();
+        String baseFolder = new File(new File(catalogFile).getAbsolutePath()).getParent();
         try {
             BufferedReader br = new BufferedReader(new FileReader(new File(catalogFile)));
             

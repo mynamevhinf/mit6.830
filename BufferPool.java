@@ -1,7 +1,10 @@
 package simpledb;
 
+import com.sun.org.apache.regexp.internal.RE;
+
 import java.io.*;
 
+import java.util.HashMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -16,6 +19,44 @@ import java.util.concurrent.ConcurrentHashMap;
  * @Threadsafe, all fields are final
  */
 public class BufferPool {
+    static class PageKey {
+        PageId pageId;
+        Permissions permissions;
+        TransactionId transactionId;
+        PageKey next;
+
+        static PageKey newPageKey(PageId pageId, Permissions permissions, TransactionId transactionId)
+        {
+            PageKey pageKey = new PageKey();
+            pageKey.pageId = pageId;
+            pageKey.permissions = permissions;
+            pageKey.transactionId = transactionId;
+            return pageKey;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (obj == this)
+                return true;
+            if (obj instanceof PageKey) {
+                PageKey other = (PageKey) obj;
+                return other.pageId.equals(pageId);
+            }
+            return false;
+        }
+
+        @Override
+        public int hashCode() {
+            return pageId.hashCode();
+        }
+    }
+
+    /// used for LRU...
+    int size, numPages;
+    private PageKey head;
+    private PageKey tail;
+    ConcurrentHashMap<PageKey, Page> pagesMap;
+
     /** Bytes per page, including header. */
     private static final int DEFAULT_PAGE_SIZE = 4096;
 
@@ -33,6 +74,12 @@ public class BufferPool {
      */
     public BufferPool(int numPages) {
         // some code goes here
+        //head = tail = null;
+        size = 0;
+        this.numPages = numPages;
+        head = PageKey.newPageKey(null, null, null);   /// guard
+        tail = head;
+        pagesMap = new ConcurrentHashMap<>();
     }
     
     public static int getPageSize() {
@@ -47,6 +94,24 @@ public class BufferPool {
     // THIS FUNCTION SHOULD ONLY BE USED FOR TESTING!!
     public static void resetPageSize() {
     	BufferPool.pageSize = DEFAULT_PAGE_SIZE;
+    }
+
+    private void insertPageToPool(PageKey pageKey)
+    {
+        if (size == numPages) {
+            reclaimOldPage();
+            size--;
+        }
+        tail.next = pageKey;
+        tail = pageKey;
+        size++;
+    }
+
+    private void reclaimOldPage()
+    {
+        PageKey removed = head.next;
+        pagesMap.remove(removed);
+        head.next = removed.next;
     }
 
     /**
@@ -64,10 +129,16 @@ public class BufferPool {
      * @param pid the ID of the requested page
      * @param perm the requested permissions on the page
      */
-    public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
+    public Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
-        // some code goes here
-        return null;
+        PageKey pageKey = PageKey.newPageKey(pid, perm, tid);
+        Page page = pagesMap.get(pageKey);
+        if (page == null) {
+            page = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
+            insertPageToPool(pageKey);
+            pagesMap.put(pageKey, page);
+        }
+        return page;
     }
 
     /**
