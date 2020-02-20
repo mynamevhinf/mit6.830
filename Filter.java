@@ -64,8 +64,7 @@ public class Filter extends Operator {
         OpIterator child = childs[0];
         while (child.hasNext()) {
             tuple = child.next();
-            if (predicate.filter(tuple))
-                break;
+            if (predicate.filter(tuple)) break;
             tuple = null;
         }
         return tuple;

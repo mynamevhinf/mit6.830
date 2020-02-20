@@ -260,6 +260,7 @@ public class HeapPage implements Page {
             throw new DbException("Trying to delete a tuple from an empty page!");
         if (!t.getTupleDesc().equals(td))
             throw new DbException("deleteTuple: tupleDesc mismatch!");
+
         //boolean willThrow = true;
         for (Tuple tuple : tuples) {
             if (tuple == null)
@@ -321,15 +322,16 @@ public class HeapPage implements Page {
      */
     public int getNumEmptySlots() {
         // some code goes here
+        int cnt = 0, idx = 0;
         byte[] header = this.header;
-        int cnt = 0;
         for (byte b : header) {
             int i = 0;
             byte bf = b;
-            while (i++ < 8) {
+            while (i++ < 8 && idx < numSlots) {
                 if ((bf & 0x1) == 0)
                     cnt++;
                 bf >>= 1;
+                idx++;
             }
         }
         return cnt;
@@ -347,9 +349,9 @@ public class HeapPage implements Page {
      */
     private void markSlotUsed(int i, boolean value) {
         if (value)
-            header[i >> 3] |= 1 << (i % 8);
+            header[i >> 3] |= 0x01 << (i % 8);
         else
-            header[i >> 3] &= ~(1 << (i % 8));
+            header[i >> 3] &= ~(0x01 << (i % 8));
     }
 
     /**

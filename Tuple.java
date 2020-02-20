@@ -123,6 +123,12 @@ public class Tuple implements Serializable {
     }
 
     public boolean theSameContAs(Tuple other) {
-            return fields.equals(other.fields) && tupleDesc.equals(other.tupleDesc);
+        if (!tupleDesc.equals(other.tupleDesc) || !recordId.equals(other.getRecordId()))
+            return false;
+        for (int i = 0; i < fields.length; i++) {
+            if (!fields[i].equals(other.fields[i]))
+                return false;
+        }
+        return true;
     }
 }

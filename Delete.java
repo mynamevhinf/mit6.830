@@ -10,6 +10,13 @@ public class Delete extends Operator {
 
     private static final long serialVersionUID = 1L;
 
+    OpIterator[] childs;
+    TransactionId transactionId;
+
+    int cnt;
+    TupleDesc td;
+    Tuple resTuple;
+
     /**
      * Constructor specifying the transaction that this delete belongs to as
      * well as the child to read from.
@@ -20,24 +27,47 @@ public class Delete extends Operator {
      *            The child operator from which to read tuples for deletion
      */
     public Delete(TransactionId t, OpIterator child) {
-        // some code goes here
+        cnt = 0;
+        transactionId = t;
+        childs = new OpIterator[] { child };
+        td = new TupleDesc(new Type[]{ Type.INT_TYPE }, null);
     }
 
     public TupleDesc getTupleDesc() {
-        // some code goes here
-        return null;
+        return childs[0].getTupleDesc();
     }
 
     public void open() throws DbException, TransactionAbortedException {
-        // some code goes here
+        super.open();
+        OpIterator opIterator = childs[0];
+        opIterator.open();
+        BufferPool bufferPool = Database.getBufferPool();
+
+        while (opIterator.hasNext()) {
+            Tuple t = opIterator.next();
+
+            try {
+                bufferPool.deleteTuple(transactionId, t);
+            } catch (IOException e) {
+                e.printStackTrace();
+                System.exit(-1);
+            }
+            cnt++;
+        }
+        Tuple t = new Tuple(td);
+        t.setField(0, new IntField(cnt));
+        resTuple = t;
     }
 
     public void close() {
-        // some code goes here
+        super.close();
+        childs[0].close();
     }
 
     public void rewind() throws DbException, TransactionAbortedException {
-        // some code goes here
+        cnt = 0;
+        close();
+        open();
     }
 
     /**
@@ -50,19 +80,19 @@ public class Delete extends Operator {
      * @see BufferPool#deleteTuple
      */
     protected Tuple fetchNext() throws TransactionAbortedException, DbException {
-        // some code goes here
-        return null;
+        Tuple t = resTuple;
+        resTuple = null;
+        return t;
     }
 
     @Override
     public OpIterator[] getChildren() {
-        // some code goes here
-        return null;
+        return childs;
     }
 
     @Override
     public void setChildren(OpIterator[] children) {
-        // some code goes here
+        childs = children;
     }
 
 }

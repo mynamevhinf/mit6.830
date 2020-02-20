@@ -135,13 +135,11 @@ public class HeapFile implements DbFile {
     // see DbFile.java for javadocs
     public ArrayList<Page> insertTuple(TransactionId tid, Tuple t)
             throws DbException, IOException, TransactionAbortedException {
-
         if (!t.getTupleDesc().equals(tupleDesc))
             throw new DbException("insertTuple: tupleDesc mismatch!");
 
         int i;
         int tableId = getId();
-        //ArrayList<Page> pages = new ArrayList<>();
         BufferPool bufferPool = Database.getBufferPool();
         for (i = 0; i < numPages(); i++) {
             HeapPageId pageId = new HeapPageId(tableId, i);
@@ -151,8 +149,8 @@ public class HeapFile implements DbFile {
             } catch (DbException e) {
                 continue;
             }
-            //pages.add(page);
-            page.markDirty(true, tid);
+
+            //page.markDirty(true, tid);
             ArrayList<Page> pages = new ArrayList<>();
             pages.add(page);
             return pages;
@@ -172,20 +170,13 @@ public class HeapFile implements DbFile {
             throw new DbException("deleteTuple: tupleDesc mismatch!");
 
         int tableId = getId();
-        ArrayList<Page> pages = new ArrayList<>();
         BufferPool bufferPool = Database.getBufferPool();
-        for (int i = 0; i < numPages(); i++) {
-            HeapPageId pageId = new HeapPageId(tableId, i);
-            HeapPage page = (HeapPage) bufferPool.getPage(tid, pageId, Permissions.READ_WRITE);
-            try {
-                page.deleteTuple(t);
-            } catch (DbException e) {
-                continue;
-            }
-            pages.add(page);
-            page.markDirty(true, tid);
-        }
-        return pages;
+        PageId pageId = t.getRecordId().getPageId();
+        if (tableId != pageId.getTableId())
+            throw new DbException("trying to delete a tuple which is not a member of the table!");
+        HeapPage page = (HeapPage) bufferPool.getPage(tid, pageId, Permissions.READ_WRITE);
+        page.deleteTuple(t);
+        return new ArrayList<Page>() {{ add(page); }};
     }
 
     // see DbFile.java for javadocs
@@ -222,7 +213,8 @@ class HeapFileScanIterator extends AbstractDbFileIterator {
         if (++currPgNo >= hf.numPages())
             return null;
         HeapPageId pageId = new HeapPageId(hf.getId(), currPgNo);
-        HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, pageId, Permissions.READ_ONLY);
+        BufferPool bufferPool = Database.getBufferPool();
+        HeapPage page = (HeapPage) bufferPool.getPage(tid, pageId, Permissions.READ_ONLY);
         tupleIterator = page.iterator();
         if (tupleIterator.hasNext())
             return tupleIterator.next();
