@@ -1,10 +1,8 @@
 package simpledb;
 
 import java.io.Serializable;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
-import java.util.List;
 
 /**
  * Tuple maintains information about the contents of a tuple. Tuples have a
@@ -122,5 +120,9 @@ public class Tuple implements Serializable {
     public void resetTupleDesc(TupleDesc td)
     {
         tupleDesc = null;
+    }
+
+    public boolean theSameContAs(Tuple other) {
+            return fields.equals(other.fields) && tupleDesc.equals(other.tupleDesc);
     }
 }

@@ -1,6 +1,5 @@
 package simpledb;
 
-import java.awt.*;
 import java.io.Serializable;
 import java.util.*;
 import java.util.List;

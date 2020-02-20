@@ -1,7 +1,5 @@
 package simpledb;
 
-import javax.xml.crypto.Data;
-import java.awt.image.DataBuffer;
 import java.io.*;
 import java.util.*;
 
@@ -28,7 +26,6 @@ public class HeapFile implements DbFile {
      *            file.
      */
     public HeapFile(File f, TupleDesc td) {
-        // some code goes here
         this.f = f;
         try {
             this.rf = new RandomAccessFile(f, "rw");
@@ -45,7 +42,6 @@ public class HeapFile implements DbFile {
      * @return the File backing this HeapFile on disk.
      */
     public File getFile() {
-        // some code goes here
         return f;
     }
 
@@ -68,7 +64,6 @@ public class HeapFile implements DbFile {
      * @return TupleDesc of this DbFile.
      */
     public TupleDesc getTupleDesc() {
-        // some code goes here
         return tupleDesc;
     }
 
@@ -82,7 +77,6 @@ public class HeapFile implements DbFile {
             byte[] data = new byte[pageSize];
             rf.seek(pageNo * pageSize);
             rf.read(data);
-            //fileInputStream.read(data, pageNo*pageSize, pageSize);
             return new HeapPage((HeapPageId) pid, data);
         } catch (Exception e) {
             e.printStackTrace();
@@ -92,8 +86,41 @@ public class HeapFile implements DbFile {
 
     // see DbFile.java for javadocs
     public void writePage(Page page) throws IOException {
-        // some code goes here
-        // not necessary for lab1
+        /// set pos
+        int pageSize = BufferPool.getPageSize();
+        HeapPage heapPage = (HeapPage) page;
+        int startPos = heapPage.getId().getPageNumber() * pageSize;
+        rf.seek(startPos);
+
+        byte[] header = heapPage.getHeader();
+        rf.write(header);
+
+        /// transfer tuples into bytes...
+        ByteArrayOutputStream baos = new ByteArrayOutputStream(pageSize - header.length);
+        DataOutputStream dos = new DataOutputStream(baos);
+        writeNextTuple(dos, heapPage.getTuples(), tupleDesc);
+        rf.write(baos.toByteArray());
+    }
+
+    private void writeNextTuple(DataOutputStream dos, Tuple[] tuples, TupleDesc tupleDesc) throws IOException {
+        Type[] types = tupleDesc.getTypes();
+        int tupleLength = tupleDesc.getSize();
+        byte[] emptyTuple = new byte[tupleLength];
+        for (Tuple t : tuples) {
+            if (t == null) {
+                dos.write(emptyTuple);
+                continue;
+            }
+            for (int i = 0; i < types.length; i++) {
+                Type type = types[i];
+                Field of = t.getField(i);
+                if (type == Type.STRING_TYPE)
+                    dos.write(type.toBytes(((StringField) of).getValue()));
+                else
+                    dos.write(type.toBytes(((IntField) of).getValue()));
+            }
+        }
+        dos.flush();
     }
 
     /**
@@ -108,17 +135,57 @@ public class HeapFile implements DbFile {
     // see DbFile.java for javadocs
     public ArrayList<Page> insertTuple(TransactionId tid, Tuple t)
             throws DbException, IOException, TransactionAbortedException {
-        // some code goes here
-        return null;
-        // not necessary for lab1
+
+        if (!t.getTupleDesc().equals(tupleDesc))
+            throw new DbException("insertTuple: tupleDesc mismatch!");
+
+        int i;
+        int tableId = getId();
+        //ArrayList<Page> pages = new ArrayList<>();
+        BufferPool bufferPool = Database.getBufferPool();
+        for (i = 0; i < numPages(); i++) {
+            HeapPageId pageId = new HeapPageId(tableId, i);
+            HeapPage page = (HeapPage) bufferPool.getPage(tid, pageId, Permissions.READ_WRITE);
+            try {
+                page.insertTuple(t);
+            } catch (DbException e) {
+                continue;
+            }
+            //pages.add(page);
+            page.markDirty(true, tid);
+            ArrayList<Page> pages = new ArrayList<>();
+            pages.add(page);
+            return pages;
+        }
+
+        HeapPageId pageId = new HeapPageId(tableId, i);
+        HeapPage newPage = HeapPage.newEmptyPage(pageId);
+        writePage(newPage);
+        return insertTuple(tid, t);
     }
 
     // see DbFile.java for javadocs
     public ArrayList<Page> deleteTuple(TransactionId tid, Tuple t) throws DbException,
             TransactionAbortedException {
-        // some code goes here
-        return null;
-        // not necessary for lab1
+
+        if (!t.getTupleDesc().equals(tupleDesc))
+            throw new DbException("deleteTuple: tupleDesc mismatch!");
+
+        int tableId = getId();
+        ArrayList<Page> pages = new ArrayList<>();
+        BufferPool bufferPool = Database.getBufferPool();
+        for (int i = 0; i < numPages(); i++) {
+            HeapPageId pageId = new HeapPageId(tableId, i);
+            HeapPage page = (HeapPage) bufferPool.getPage(tid, pageId, Permissions.READ_WRITE);
+            try {
+                page.deleteTuple(t);
+            } catch (DbException e) {
+                continue;
+            }
+            pages.add(page);
+            page.markDirty(true, tid);
+        }
+        return pages;
     }
 
     // see DbFile.java for javadocs
@@ -157,7 +224,9 @@ class HeapFileScanIterator extends AbstractDbFileIterator {
         HeapPageId pageId = new HeapPageId(hf.getId(), currPgNo);
         HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, pageId, Permissions.READ_ONLY);
         tupleIterator = page.iterator();
-        return tupleIterator.next();
+        if (tupleIterator.hasNext())
+            return tupleIterator.next();
+        return null;
     }
 
     @Override

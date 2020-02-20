@@ -4,7 +4,9 @@ import com.sun.org.apache.regexp.internal.RE;
 
 import java.io.*;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -40,7 +42,7 @@ public class BufferPool {
                 return true;
             if (obj instanceof PageKey) {
                 PageKey other = (PageKey) obj;
-                return other.pageId.equals(pageId);
+                return transactionId.equals(other.transactionId) && pageId.equals(other.pageId);
             }
             return false;
         }
@@ -96,12 +98,17 @@ public class BufferPool {
     	BufferPool.pageSize = DEFAULT_PAGE_SIZE;
     }
 
-    private void insertPageToPool(PageKey pageKey)
+    public void checkIfPoolFulled()
     {
         if (size == numPages) {
             reclaimOldPage();
             size--;
         }
+    }
+
+    public void insertPage(PageKey pageKey)
+    {
+        checkIfPoolFulled();
         tail.next = pageKey;
         tail = pageKey;
         size++;
@@ -135,7 +142,7 @@ public class BufferPool {
         Page page = pagesMap.get(pageKey);
         if (page == null) {
             page = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
-            insertPageToPool(pageKey);
+            insertPage(pageKey);
             pagesMap.put(pageKey, page);
         }
         return page;
@@ -202,8 +209,11 @@ public class BufferPool {
      */
     public void insertTuple(TransactionId tid, int tableId, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
-        // some code goes here
-        // not necessary for lab1
+        DbFile f = Database.getCatalog().getDatabaseFile(tableId);
+        ArrayList<Page> pages = f.insertTuple(tid, t);
+        for (Page page : pages) {
+
+        }
     }
 
     /**
@@ -219,10 +229,17 @@ public class BufferPool {
      * @param tid the transaction deleting the tuple.
      * @param t the tuple to delete
      */
-    public  void deleteTuple(TransactionId tid, Tuple t)
+    public void deleteTuple(TransactionId tid, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
-        // some code goes here
-        // not necessary for lab1
+        for (Map.Entry<PageKey, Page> entry : pagesMap.entrySet()) {
+            HeapPage page = (HeapPage) entry.getValue();
+            try {
+                page.deleteTuple(t);
+            } catch (DbException e) {
+                continue;
+            }
+            page.markDirty(true, tid);
+        }
     }
 
     /**

@@ -1,6 +1,10 @@
 package simpledb;
 
+import jdk.nashorn.api.scripting.ScriptObjectMirror;
+
 import java.util.*;
+
+import static simpledb.Aggregator.NO_GROUPING;
 
 /**
  * The Aggregation operator that computes an aggregate (e.g., sum, avg, max,
@@ -10,6 +14,11 @@ import java.util.*;
 public class Aggregate extends Operator {
 
     private static final long serialVersionUID = 1L;
+
+    OpIterator[] childs;
+    int afield, gfield;
+    Aggregator.Op aop;
+    Aggregator aggregator;
 
     /**
      * Constructor.
@@ -30,7 +39,18 @@ public class Aggregate extends Operator {
      *            The aggregation operator to use
      */
     public Aggregate(OpIterator child, int afield, int gfield, Aggregator.Op aop) {
-	// some code goes here
+        this.childs = new OpIterator[]{ child };
+        this.afield = afield;
+        this.gfield = gfield;
+        this.aop = aop;
+
+        TupleDesc td = child.getTupleDesc();
+        Type[] types = td.getTypes();
+        Type gbType = gfield == NO_GROUPING ? null : types[gfield];
+        if (types[afield] == Type.INT_TYPE)
+            aggregator = new IntegerAggregator(gfield, gbType, afield, aop);
+        else
+            aggregator = new StringAggregator(gfield, gbType, afield, aop);
     }
 
     /**
@@ -39,8 +59,7 @@ public class Aggregate extends Operator {
      *         {@link simpledb.Aggregator#NO_GROUPING}
      * */
     public int groupField() {
-	// some code goes here
-	return -1;
+        return gfield;
     }
 
     /**
@@ -49,16 +68,16 @@ public class Aggregate extends Operator {
      *         null;
      * */
     public String groupFieldName() {
-	// some code goes here
-	return null;
+	    if (gfield != NO_GROUPING)
+	        return childs[0].getTupleDesc().getFieldName(0);
+	    return null;
     }
 
     /**
      * @return the aggregate field
      * */
     public int aggregateField() {
-	// some code goes here
-	return -1;
+        return afield;
     }
 
     /**
@@ -67,24 +86,31 @@ public class Aggregate extends Operator {
      * */
     public String aggregateFieldName() {
 	// some code goes here
-	return null;
+	    return childs[0].getTupleDesc().getFieldName(1);
     }
 
     /**
      * @return return the aggregate operator
      * */
     public Aggregator.Op aggregateOp() {
-	// some code goes here
-	return null;
+        return aop;
     }
 
     public static String nameOfAggregatorOp(Aggregator.Op aop) {
-	return aop.toString();
+	    return aop.toString();
     }
 
     public void open() throws NoSuchElementException, DbException,
 	    TransactionAbortedException {
-	// some code goes here
+        super.open();
+        OpIterator iterator = childs[0];
+        iterator.open();
+        while (iterator.hasNext()) {
+            Tuple tuple = iterator.next();
+            aggregator.mergeTupleIntoGroup(tuple);
+        }
+        aggregator.iterator().open();
+        //aggregator.iterator().open();
     }
 
     /**
@@ -95,12 +121,14 @@ public class Aggregate extends Operator {
      * aggregate. Should return null if there are no more tuples.
      */
     protected Tuple fetchNext() throws TransactionAbortedException, DbException {
-	// some code goes here
-	return null;
+	    OpIterator iterator = aggregator.iterator();
+	    if (iterator.hasNext())
+	        return iterator.next();
+	    return null;
     }
 
     public void rewind() throws DbException, TransactionAbortedException {
-	// some code goes here
+        aggregator.iterator().rewind();
     }
 
     /**
@@ -115,23 +143,22 @@ public class Aggregate extends Operator {
      * iterator.
      */
     public TupleDesc getTupleDesc() {
-	// some code goes here
-	return null;
+	    return aggregator.iterator().getTupleDesc();
     }
 
     public void close() {
-	// some code goes here
+        super.close();
+        aggregator.iterator().close();
     }
 
     @Override
     public OpIterator[] getChildren() {
-	// some code goes here
-	return null;
+	    return childs;
     }
 
     @Override
     public void setChildren(OpIterator[] children) {
-	// some code goes here
+	    childs = children;
     }
     
 }

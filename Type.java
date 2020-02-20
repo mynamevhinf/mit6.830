@@ -24,6 +24,14 @@ public enum Type implements Serializable {
             }
         }
 
+        @Override
+        public byte[] toBytes(Object o)
+        {
+            byte[] data = new byte[4];
+            integerToBytes(data, (Integer) o);
+            return data;
+        }
+
     }, STRING_TYPE() {
         @Override
         public int getLen() {
@@ -41,6 +49,19 @@ public enum Type implements Serializable {
             } catch (IOException e) {
                 throw new ParseException("couldn't parse", 0);
             }
+        }
+
+        @Override
+        public byte[] toBytes(Object o)
+        {
+            String val = (String) o;
+            byte[] data = new byte[STRING_LEN + 4];
+            int length = val.length();
+            integerToBytes(data, length);
+            byte[] strByes = val.getBytes();
+            for (int i = 0; i < length; i++)
+                data[i + 4] = strByes[i];
+            return data;
         }
     };
     
@@ -60,4 +81,14 @@ public enum Type implements Serializable {
    */
     public abstract Field parse(DataInputStream dis) throws ParseException;
 
+
+    public abstract byte[] toBytes(Object o);
+
+    static private void integerToBytes(byte[] data, int val)
+    {
+        data[0] = (byte) (val >> 24);
+        data[1] = (byte) ((val >> 16) & 0x0ff);
+        data[2] = (byte) ((val >> 8) & 0x0ff);
+        data[3] = (byte) (val & 0x0ff);
+    }
 }

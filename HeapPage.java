@@ -22,6 +22,9 @@ public class HeapPage implements Page {
     byte[] oldData;
     private final Byte oldDataLock=new Byte((byte)0);
 
+    boolean isDirty;
+    TransactionId transactionId;
+
     /**
      * Create a HeapPage from a set of bytes of data read from disk.
      * The format of a HeapPage is a set of header bytes indicating
@@ -60,6 +63,19 @@ public class HeapPage implements Page {
         dis.close();
 
         setBeforeImage();
+    }
+
+    public static HeapPage newEmptyPage(HeapPageId pageId)
+    {
+        HeapPage page = null;
+        byte[] data = HeapPage.createEmptyPageData();
+        try {
+            page = new HeapPage(pageId, data);
+        } catch (IOException e) {
+            e.printStackTrace();
+            System.exit(-1);
+        }
+        return page;
     }
 
     /** Retrieve the number of tuples on this page.
@@ -109,7 +125,6 @@ public class HeapPage implements Page {
      * @return the PageId associated with this page.
      */
     public HeapPageId getId() {
-        // some code goes here
         return pid;
     }
 
@@ -241,8 +256,24 @@ public class HeapPage implements Page {
      * @param t The tuple to delete
      */
     public void deleteTuple(Tuple t) throws DbException {
-        // some code goes here
-        // not necessary for lab1
+        if (getNumEmptySlots() == numSlots)
+            throw new DbException("Trying to delete a tuple from an empty page!");
+        if (!t.getTupleDesc().equals(td))
+            throw new DbException("deleteTuple: tupleDesc mismatch!");
+        //boolean willThrow = true;
+        for (Tuple tuple : tuples) {
+            if (tuple == null)
+                continue;
+            if (tuple.theSameContAs(t)) {
+                int tupNo = tuple.getRecordId().tupleNo;
+                markSlotUsed(tupNo, false);
+                tuples[tupNo] = null;
+                //willThrow = false;
+                return;
+            }
+        }
+        //if (willThrow)
+        throw new DbException("Trying to delete a tuple does not exist in thie page!");
     }
 
     /**
@@ -253,8 +284,19 @@ public class HeapPage implements Page {
      * @param t The tuple to add.
      */
     public void insertTuple(Tuple t) throws DbException {
-        // some code goes here
-        // not necessary for lab1
+        if (getNumEmptySlots() == 0)
+            throw new DbException("Trying to insert tuple to a fulled page!");
+        if (!t.getTupleDesc().equals(td))
+            throw new DbException("insertTuple: tupleDesc mismatch!");
+        for (int i = 0; i < numSlots; i++) {
+            if (!isSlotUsed(i)) {
+                tuples[i] = t;
+                RecordId recordId = new RecordId(pid, i);
+                t.setRecordId(recordId);
+                markSlotUsed(i, true);
+                return;
+            }
+        }
     }
 
     /**
@@ -262,17 +304,16 @@ public class HeapPage implements Page {
      * that did the dirtying
      */
     public void markDirty(boolean dirty, TransactionId tid) {
-        // some code goes here
-	    // not necessary for lab1
+        isDirty = dirty;
+        if (dirty)
+            transactionId = tid;
     }
 
     /**
      * Returns the tid of the transaction that last dirtied this page, or null if the page is not dirty
      */
     public TransactionId isDirty() {
-        // some code goes here
-	// Not necessary for lab1
-        return null;      
+        return isDirty ? transactionId : null;
     }
 
     /**
@@ -305,8 +346,10 @@ public class HeapPage implements Page {
      * Abstraction to fill or clear a slot on this page.
      */
     private void markSlotUsed(int i, boolean value) {
-        // some code goes here
-        // not necessary for lab1
+        if (value)
+            header[i >> 3] |= 1 << (i % 8);
+        else
+            header[i >> 3] &= ~(1 << (i % 8));
     }
 
     /**
@@ -317,5 +360,12 @@ public class HeapPage implements Page {
         return Arrays.stream(tuples).filter(tuple -> tuple != null).iterator();
     }
 
+    public byte[] getHeader() {
+        return header;
+    }
+
+    public Tuple[] getTuples() {
+        return tuples;
+    }
 }
 
