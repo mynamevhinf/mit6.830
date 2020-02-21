@@ -51,7 +51,19 @@ public class IntHistogram {
     public void updateWidth() { width = (1.0 + max - min) / n; }
     public void resetBuckets() { Arrays.fill(buckets, 0); }
 
-    private int getIndex(int v)
+    public int getMax() {
+        return max;
+    }
+
+    public int getMin() {
+        return min;
+    }
+
+    public double getWidth() {
+        return width;
+    }
+
+    public int getIndex(int v)
     {
         if (v < min || v >= max)
             throw new IllegalArgumentException(String.format("%d out of range: [%d, %d)", v, min, max));

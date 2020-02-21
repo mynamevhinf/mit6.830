@@ -11,6 +11,8 @@ import javax.swing.tree.*;
  * logical plan.
  */
 public class JoinOptimizer {
+    private static double RANGE_CARDINALITY_HEURISTIC_RATE = .3629;
+
     LogicalPlan p;
     Vector<LogicalJoinNode> joins;
 
@@ -111,7 +113,7 @@ public class JoinOptimizer {
             // HINT: You may need to use the variable "j" if you implemented
             // a join algorithm that's more complicated than a basic
             // nested-loops join.
-            return cost1 + cost2 * card1;
+            return cost1 + cost2 * card1 + cost1 + cost2;
         }
     }
 
@@ -155,9 +157,95 @@ public class JoinOptimizer {
             String field2PureName, int card1, int card2, boolean t1pkey,
             boolean t2pkey, Map<String, TableStats> stats,
             Map<String, Integer> tableAliasToId) {
+
         int card = 1;
-        // some code goes here
-        return card <= 0 ? 1 : card;
+
+        if (t1pkey && t2pkey) return Integer.min(card1, card2);
+        else if (t1pkey) return card2;
+        else if (t2pkey) return card1;
+
+        switch (joinOp) {
+            case NOT_EQUALS: case EQUALS: case LIKE:
+                 card = Integer.max(card1, card2); break;
+            case GREATER_THAN_OR_EQ: case LESS_THAN_OR_EQ:
+            case GREATER_THAN: case LESS_THAN:
+                Predicate.Op ngOp = swapOperator(joinOp);
+                double rate = estimateTableJoinCardinalityAux(table1Alias, table2Alias, tableAliasToId,
+                                        stats, field1PureName, field2PureName, ngOp);
+                card = (int) (card1 * card2 * rate);
+            default:
+        }
+        return card;
+    }
+
+    private static Predicate.Op swapOperator(Predicate.Op joinOp)
+    {
+        switch (joinOp) {
+            case GREATER_THAN_OR_EQ: return Predicate.Op.LESS_THAN;
+            case LESS_THAN_OR_EQ: return  Predicate.Op.GREATER_THAN;
+            case GREATER_THAN: return Predicate.Op.LESS_THAN_OR_EQ;
+            case LESS_THAN: return Predicate.Op.GREATER_THAN_OR_EQ;
+            default: return joinOp;
+        }
+    }
+
+    private static double estimateTableJoinCardinalityAux(String table1Alias, String table2Alias,
+                                                          Map<String, Integer> tableAliasToId, Map<String,
+                                                          TableStats> stats, String field1PureName,
+                                                          String field2PureName, Predicate.Op ngOp)
+    {
+        Catalog catalog = Database.getCatalog();
+        int tableId1 = tableAliasToId.get(table1Alias);
+        int tableId2 = tableAliasToId.get(table2Alias);
+        HeapFile f1 = (HeapFile) catalog.getDatabaseFile(tableId1);
+        HeapFile f2 = (HeapFile) catalog.getDatabaseFile(tableId1);
+        TableStats ts1 = stats.get(catalog.getTableName(tableId1));
+        TableStats ts2 = stats.get(catalog.getTableName(tableId2));
+        int field1 = f1.getTupleDesc().getFieldId(field1PureName);
+        int field2 = f2.getTupleDesc().getFieldId(field2PureName);
+
+        double rate = 0.0;
+        IntHistogram ihist1, ihist2;
+        if (f1.getTupleDesc().getFieldType(field1) == Type.INT_TYPE) {
+            ihist1 = (IntHistogram) ts1.getHistogram(field1);
+            ihist2 = (IntHistogram) ts2.getHistogram(field2);
+        } else {
+            ihist1 = ((StringHistogram) ts1.getHistogram(field1)).getHist();
+            ihist2 = ((StringHistogram) ts2.getHistogram(field2)).getHist();
+        }
+
+        int realMin = ihist1.getMin();
+        int realMax = ihist1.getMax();
+        if (ngOp == Predicate.Op.GREATER_THAN || ngOp == Predicate.Op.GREATER_THAN_OR_EQ) {
+            if (ihist1.getMax() <= ihist2.getMin()) return 1.0;
+            if (ihist1.getMin() >= ihist2.getMax()) return 0.0;
+
+            if (ihist1.getMin() < ihist2.getMin()) {
+                realMin = (int) (ihist1.getIndex(ihist2.getMin()) * ihist1.getWidth());
+                rate += ihist1.estimateSelectivity(Predicate.Op.LESS_THAN, realMin);
+            }
+
+            if (ihist1.getMax() > ihist2.getMax())
+                realMax = (int) (ihist1.getIndex(ihist2.getMin()) * ihist1.getWidth());
+        } else {
+            if (ihist1.getMax() <= ihist2.getMin()) return 0.0;
+            if (ihist1.getMin() >= ihist2.getMax()) return 1.0;
+
+            if (ihist1.getMin() < ihist2.getMin())
+                realMin = ihist2.getMin();
+
+            if (ihist1.getMax() > ihist2.getMax()) {
+                realMax = (int) (ihist1.getIndex(ihist2.getMax()) * ihist1.getWidth());
+                rate += ihist1.estimateSelectivity(Predicate.Op.GREATER_THAN, realMax);
+            }
+        }
+
+        for (int val = realMin; val < realMax; val++) {
+            double r1 = ihist1.estimateSelectivity(Predicate.Op.EQUALS, val);
+            double r2 = ihist2.estimateSelectivity(ngOp, val);
+            rate += r1 * r2;
+        }
+        return rate != 0.0 && rate <= 1.0 ? rate : 1.0;
     }
 
     /**

@@ -101,6 +101,19 @@ public class TupleDesc implements Serializable {
         return types;
     }
 
+    public int getFieldId(String name)
+    {
+        if (fieldNames == null)
+            return -1;
+        int i = 0;
+        for (String field : fieldNames) {
+            if (field.equals(name))
+                 break;
+            i++;
+        }
+        return i;
+    }
+
     /**
      * Gets the (possibly null) field name of the ith field of this TupleDesc.
      * 

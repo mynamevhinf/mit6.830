@@ -38,7 +38,6 @@ public class TableStats {
         } catch (IllegalAccessException e) {
             e.printStackTrace();
         }
-
     }
 
     public static Map<String, TableStats> getStatsMap() {
@@ -166,6 +165,10 @@ public class TableStats {
     {
         HeapFile f = (HeapFile) Database.getCatalog().getDatabaseFile(tableId);
         return f.getVersion() > version;
+    }
+
+    public Object getHistogram(int i) {
+        return histograms[i];
     }
 
     /**
