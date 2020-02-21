@@ -1,5 +1,6 @@
 package simpledb;
 
+import javax.lang.model.element.TypeElement;
 import java.io.*;
 import java.util.*;
 
@@ -17,6 +18,8 @@ public class HeapFile implements DbFile {
     File f;
     RandomAccessFile rf;
     TupleDesc tupleDesc;
+
+    int version = 0;
 
     /**
      * Constructs a heap file backed by the specified file.
@@ -56,6 +59,10 @@ public class HeapFile implements DbFile {
      */
     public int getId() {
         return f.getAbsoluteFile().hashCode();
+    }
+
+    public int getVersion() {
+        return version;
     }
 
     /**
@@ -153,6 +160,7 @@ public class HeapFile implements DbFile {
             //page.markDirty(true, tid);
             ArrayList<Page> pages = new ArrayList<>();
             pages.add(page);
+            version++;
             return pages;
         }
 
@@ -176,6 +184,7 @@ public class HeapFile implements DbFile {
             throw new DbException("trying to delete a tuple which is not a member of the table!");
         HeapPage page = (HeapPage) bufferPool.getPage(tid, pageId, Permissions.READ_WRITE);
         page.deleteTuple(t);
+        version++;
         return new ArrayList<Page>() {{ add(page); }};
     }
 

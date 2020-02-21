@@ -1,8 +1,15 @@
 package simpledb;
 
+import java.util.Arrays;
+
 /** A class to represent a fixed-width histogram over a single integer-based field.
  */
 public class IntHistogram {
+
+    int min, max;
+    int n, ntupls = 0;
+    int[] buckets;
+    double width;
 
     /**
      * Create a new IntHistogram.
@@ -22,6 +29,33 @@ public class IntHistogram {
      */
     public IntHistogram(int buckets, int min, int max) {
     	// some code goes here
+        this.min = min;
+        this.max = max + 1;
+        this.n = buckets;
+        this.buckets = new int[n];
+        this.width = (1.0 + max - min) / buckets;
+    }
+
+    public IntHistogram setMin(int min) {
+        this.min = min;
+        return this;
+    }
+
+    public IntHistogram setMax(int max) {
+        this.max = max;
+        return this;
+    }
+
+    public void updateMin(int v) { min = min <= v ? min : v; }
+    public void updateMax(int v) { max = max > v ? max : v+1; }
+    public void updateWidth() { width = (1.0 + max - min) / n; }
+    public void resetBuckets() { Arrays.fill(buckets, 0); }
+
+    private int getIndex(int v)
+    {
+        if (v < min || v >= max)
+            throw new IllegalArgumentException(String.format("%d out of range: [%d, %d)", v, min, max));
+        return (int) ((v - min) / width);
     }
 
     /**
@@ -29,7 +63,22 @@ public class IntHistogram {
      * @param v Value to add to the histogram
      */
     public void addValue(int v) {
-    	// some code goes here
+    	buckets[getIndex(v)]++;
+        ntupls++;
+    }
+
+    private double estimateSelectivityGreater(int v)
+    {
+        if (v < min)
+            return 1;
+        if (v >= max-1)
+            return 0;
+
+        int idx = getIndex(v);
+        double bs = buckets[idx] * ((idx + 1) * width - v) / width;
+        for (int i = idx + 1; i < buckets.length; i++)
+            bs += buckets[i];
+        return bs / ntupls;
     }
 
     /**
@@ -43,9 +92,27 @@ public class IntHistogram {
      * @return Predicted selectivity of this particular operator and value
      */
     public double estimateSelectivity(Predicate.Op op, int v) {
-
-    	// some code goes here
-        return -1.0;
+        switch (op) {
+            case NOT_EQUALS:
+                return 1 - estimateSelectivity(Predicate.Op.EQUALS, v);
+            case EQUALS: case LIKE:
+                /*
+                if (v >= max || v < min)
+                    return 0;
+                int idx = getIndex(v);
+                return buckets[idx] / width / ntupls;
+                */
+                return estimateSelectivityGreater(v - 1) - estimateSelectivityGreater(v);
+            case LESS_THAN:
+                return 1 - estimateSelectivityGreater(v-1);
+            case LESS_THAN_OR_EQ:
+                return 1 - estimateSelectivityGreater(v);
+            case GREATER_THAN:
+                return estimateSelectivityGreater(v);
+            case GREATER_THAN_OR_EQ:
+                return estimateSelectivityGreater(v-1);
+            default: return -1.0;
+        }
     }
     
     /**
@@ -66,7 +133,8 @@ public class IntHistogram {
      * @return A string describing this histogram, for debugging purposes
      */
     public String toString() {
-        // some code goes here
-        return null;
+        StringBuilder builder = new StringBuilder("length: ").append(buckets.length).append(", [").append(min)
+                .append(',').append(max).append(')');
+        return builder.toString();
     }
 }
