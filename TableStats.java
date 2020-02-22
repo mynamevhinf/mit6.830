@@ -87,6 +87,7 @@ public class TableStats {
         // necessarily have to (for example) do everything
         // in a single scan of the table.
         // some code goes here
+        this.version = -1;
         this.tableId = tableid;
         this.ioCostPerPage = ioCostPerPage;
 
@@ -100,7 +101,7 @@ public class TableStats {
             else
                 histograms[i++] = new StringHistogram(NUM_HIST_BINS);
         }
-        updateStats();
+        //updateStats();
     }
 
     private void updateStats()
@@ -155,6 +156,10 @@ public class TableStats {
             e.printStackTrace();
             System.exit(-1);
         }
+
+        Arrays.stream(histograms).forEach(o ->
+        { if (o instanceof IntHistogram) ((IntHistogram) o).calAggBuckets();
+        else ((StringHistogram) o).getHist().calAggBuckets(); });
 
         this.ntuples = nTuples;
         this.npages = f.numPages();

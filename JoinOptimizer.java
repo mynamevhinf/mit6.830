@@ -1,5 +1,7 @@
 package simpledb;
 
+import sun.rmi.runtime.Log;
+
 import java.util.*;
 
 import javax.swing.*;
@@ -171,7 +173,7 @@ public class JoinOptimizer {
             case GREATER_THAN: case LESS_THAN:
                 Predicate.Op ngOp = swapOperator(joinOp);
                 double rate = estimateTableJoinCardinalityAux(table1Alias, table2Alias, tableAliasToId,
-                                        stats, field1PureName, field2PureName, ngOp);
+                                stats, field1PureName, field2PureName, ngOp);
                 card = (int) (card1 * card2 * rate);
             default:
         }
@@ -204,7 +206,6 @@ public class JoinOptimizer {
         int field1 = f1.getTupleDesc().getFieldId(field1PureName);
         int field2 = f2.getTupleDesc().getFieldId(field2PureName);
 
-        double rate = 0.0;
         IntHistogram ihist1, ihist2;
         if (f1.getTupleDesc().getFieldType(field1) == Type.INT_TYPE) {
             ihist1 = (IntHistogram) ts1.getHistogram(field1);
@@ -214,6 +215,7 @@ public class JoinOptimizer {
             ihist2 = ((StringHistogram) ts2.getHistogram(field2)).getHist();
         }
 
+        double rate = 0.0;
         int realMin = ihist1.getMin();
         int realMax = ihist1.getMax();
         if (ngOp == Predicate.Op.GREATER_THAN || ngOp == Predicate.Op.GREATER_THAN_OR_EQ) {
@@ -221,12 +223,13 @@ public class JoinOptimizer {
             if (ihist1.getMin() >= ihist2.getMax()) return 0.0;
 
             if (ihist1.getMin() < ihist2.getMin()) {
-                realMin = (int) (ihist1.getIndex(ihist2.getMin()) * ihist1.getWidth());
+                realMin = ihist2.getMin();
+                //realMin = (int) (ihist1.getIndex(ihist2.getMin()) * ihist1.getWidth());
                 rate += ihist1.estimateSelectivity(Predicate.Op.LESS_THAN, realMin);
             }
 
             if (ihist1.getMax() > ihist2.getMax())
-                realMax = (int) (ihist1.getIndex(ihist2.getMin()) * ihist1.getWidth());
+                realMax = ihist2.getMax();//(int) (ihist1.getIndex(ihist2.getMin()) * ihist1.getWidth());
         } else {
             if (ihist1.getMax() <= ihist2.getMin()) return 0.0;
             if (ihist1.getMin() >= ihist2.getMax()) return 1.0;
@@ -235,17 +238,16 @@ public class JoinOptimizer {
                 realMin = ihist2.getMin();
 
             if (ihist1.getMax() > ihist2.getMax()) {
-                realMax = (int) (ihist1.getIndex(ihist2.getMax()) * ihist1.getWidth());
+                //realMax = (int) (ihist1.getIndex(ihist2.getMax()) * ihist1.getWidth());
+                realMax = ihist2.getMax();
                 rate += ihist1.estimateSelectivity(Predicate.Op.GREATER_THAN, realMax);
             }
         }
 
-        for (int val = realMin; val < realMax; val++) {
-            double r1 = ihist1.estimateSelectivity(Predicate.Op.EQUALS, val);
-            double r2 = ihist2.estimateSelectivity(ngOp, val);
-            rate += r1 * r2;
-        }
-        return rate != 0.0 && rate <= 1.0 ? rate : 1.0;
+        double width = ihist1.getWidth();
+        for (int val = realMin; val < realMax; val += width)
+            rate += ihist2.estimateSelectivity(ngOp, (int) (val+width/2)) * ihist1.getBucket(val);
+        return rate != 0.0 && rate <= 1.0 ? rate : 0.3721;
     }
 
     /**
@@ -305,10 +307,44 @@ public class JoinOptimizer {
             HashMap<String, TableStats> stats,
             HashMap<String, Double> filterSelectivities, boolean explain)
             throws ParsingException {
-        //Not necessary for labs 1--3
 
-        // some code goes here
-        //Replace the following
+        int size = joins.size();
+        Set<LogicalJoinNode> resKey = null;
+        PlanCache pc = null, oldPc = new PlanCache();
+        AuxIterator<LogicalJoinNode> iterator0 = AuxIterator.newAuxIterator(joins);
+
+        for (int i = 1; i <= size; i++) {
+            pc = new PlanCache();
+            iterator0.rewind(i, size);
+            while (iterator0.hasNext()) {
+                Set<LogicalJoinNode> s1 = (Set<LogicalJoinNode>) ((HashSet) iterator0.next()).clone();
+                double bestCostSoFar = Double.MAX_VALUE;
+                int bestCard = 0; Vector<LogicalJoinNode> bestPlan = null;
+
+                Object[] nodes = s1.toArray();
+                for (Object o : nodes) {
+                    LogicalJoinNode removed = (LogicalJoinNode) o;
+                    s1.remove(o);
+                    CostCard costCard = computeCostAndCardOfSubplan(stats, filterSelectivities,
+                            removed, s1, bestCostSoFar, oldPc);
+                    s1.add((LogicalJoinNode) o);
+
+                    if (costCard != null && bestCostSoFar > costCard.cost) {
+                        bestCard = costCard.card;
+                        bestPlan = costCard.plan;
+                        bestCostSoFar = costCard.cost;
+                    }
+                }
+
+                pc.addPlan(s1, bestCostSoFar, bestCard, bestPlan);
+                resKey = s1;
+            }
+            oldPc = pc;
+        }
+
+        joins = pc.getOrder(resKey);
+        if (explain)
+            printJoins(joins, pc, stats, filterSelectivities);
         return joins;
     }
 
@@ -367,9 +403,10 @@ public class JoinOptimizer {
         String table1Alias = j.t1Alias;
         String table2Alias = j.t2Alias;
 
-        Set<LogicalJoinNode> news = (Set<LogicalJoinNode>) ((HashSet<LogicalJoinNode>) joinSet)
-                .clone();
-        news.remove(j);
+        Set<LogicalJoinNode> news = joinSet;
+        //Set<LogicalJoinNode> news = (Set<LogicalJoinNode>) ((HashSet<LogicalJoinNode>) joinSet)
+        //        .clone();
+        //news.remove(j);
 
         double t1cost, t2cost;
         int t1card, t2card;
@@ -638,4 +675,129 @@ public class JoinOptimizer {
 
     }
 
+}
+
+class AuxIterator<T> {
+    int[] indexs;
+    int lastMoved;
+    BitSet bitSet;
+    boolean swap = false;
+    Vector<T> joins;
+    Set<T> next, reused;
+
+    static <T> AuxIterator<T> newAuxIterator(Vector<T> joins) {
+        AuxIterator<T> iterator = new AuxIterator<T>();
+        iterator.joins = joins;
+        iterator.reused = new HashSet<>();
+        return iterator;
+    }
+
+    public void rewind(int sl, int l)
+    {
+        int rsl = sl;
+        if ((sl << 1) > l) {
+            rsl = l - sl;
+            swap = true;
+        }
+
+        int[] indexs = new int[rsl];
+        for (int i = 0; i <= rsl-1; i++)
+            indexs[i] = i;
+        BitSet bitSet = new BitSet(l);
+
+        this.next = null;
+        this.indexs = indexs;
+        this.bitSet = bitSet;
+        this.lastMoved = rsl - 1;
+
+        if (sl == l) {
+            Set<T> onlySet = new HashSet<>();
+            Iterator<T> it = joins.iterator();
+            while (it.hasNext())
+                onlySet.add(it.next());
+            this.next = onlySet;
+            return;
+        }
+
+        if (rsl > 0)
+            bitSet.flip(0, rsl-1);
+    }
+
+    boolean hasNext()
+    {
+        if (indexs.length == 0 || lastMoved < 0) {
+            if (next == null)
+                return false;
+        }
+        if (next == null)
+            fetchNext();
+        return next != null ? true : false;
+    }
+
+    private void fetchNext()
+    {
+        int l = joins.size();
+
+        int move = lastMoved;
+        while (true) {
+            int idx = indexs[move];
+            int avail = bitSet.nextClearBit(idx);
+            avail = avail <= l ? avail : l;
+            bitSet.clear(idx);
+
+            if (avail >= l) {
+                if (move == 0) {
+                    lastMoved = -1;
+                    return;
+                }
+
+                int oldmoved = move;
+                for (move-=1; move >= 0; move--) {
+                    bitSet.clear(indexs[move]);
+                    if (indexs[move+1] - indexs[move] > 1)
+                        break;
+                }
+
+                if (move < 0) {
+                    lastMoved = -1;
+                    return;
+                }
+
+                bitSet.clear(indexs[move]);;
+                int baseIdx = ++indexs[move];
+                bitSet.set(baseIdx);
+                for (int i = move+1; i <= oldmoved; i++)
+                    indexs[i] = indexs[i - 1] + 1;
+                bitSet.set(indexs[move+1], indexs[oldmoved]);
+                move = oldmoved;
+                continue;
+            }
+            bitSet.set(avail);
+            indexs[move] = avail;
+            lastMoved = move;
+            break;
+        }
+
+        Set<T> reused = this.reused;
+        reused.clear();
+        if (swap) {
+            int idx = bitSet.nextClearBit(0);
+            while (idx < l) {
+                reused.add(joins.get(idx++));
+                idx = bitSet.nextClearBit(idx);
+            }
+        } else {
+            for (int idx : indexs) {
+                reused.add(joins.get(idx));
+            }
+        }
+        next = reused;
+    }
+
+    Set<T> next()
+    {
+        Set<T> rs = next;
+        next = null;
+        return rs;
+    }
 }

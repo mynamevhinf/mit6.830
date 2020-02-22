@@ -9,6 +9,7 @@ public class IntHistogram {
     int min, max;
     int n, ntupls = 0;
     int[] buckets;
+    int[] aggBuckets;
     double width;
 
     /**
@@ -33,7 +34,10 @@ public class IntHistogram {
         this.max = max + 1;
         this.n = buckets;
         this.buckets = new int[n];
+        this.aggBuckets = new int[n+1];
         this.width = (1.0 + max - min) / buckets;
+
+        this.aggBuckets[0] = -1;
     }
 
     public IntHistogram setMin(int min) {
@@ -49,7 +53,16 @@ public class IntHistogram {
     public void updateMin(int v) { min = min <= v ? min : v; }
     public void updateMax(int v) { max = max > v ? max : v+1; }
     public void updateWidth() { width = (1.0 + max - min) / n; }
-    public void resetBuckets() { Arrays.fill(buckets, 0); }
+    public void resetBuckets() { Arrays.fill(buckets, 0); aggBuckets[0] = -1; }
+
+    private boolean isAggBucketAval() { return aggBuckets[0] != -1; }
+
+    public void calAggBuckets()
+    {
+        aggBuckets[n] = 0;
+        for (int i = n-1; i >= 0; i--)
+            aggBuckets[i] = buckets[i] + aggBuckets[i+1];
+    }
 
     public int getMax() {
         return max;
@@ -70,6 +83,11 @@ public class IntHistogram {
         return (int) ((v - min) / width);
     }
 
+    public double getBucket(int v)
+    {
+        return buckets[getIndex(v)];
+    }
+
     /**
      * Add a value to the set of values that you are keeping a histogram of.
      * @param v Value to add to the histogram
@@ -88,8 +106,11 @@ public class IntHistogram {
 
         int idx = getIndex(v);
         double bs = buckets[idx] * ((idx + 1) * width - v) / width;
-        for (int i = idx + 1; i < buckets.length; i++)
-            bs += buckets[i];
+        if (!isAggBucketAval()) {
+            for (int i = idx + 1; i < buckets.length; i++)
+                bs += buckets[i];
+        } else
+            bs += aggBuckets[idx+1];
         return bs / ntupls;
     }
 
@@ -108,13 +129,15 @@ public class IntHistogram {
             case NOT_EQUALS:
                 return 1 - estimateSelectivity(Predicate.Op.EQUALS, v);
             case EQUALS: case LIKE:
-                /*
                 if (v >= max || v < min)
                     return 0;
+                if (v == min)
+                    return 1 - estimateSelectivityGreater(v);
                 int idx = getIndex(v);
-                return buckets[idx] / width / ntupls;
-                */
-                return estimateSelectivityGreater(v - 1) - estimateSelectivityGreater(v);
+                int idxvm1 = getIndex(v-1);
+                double res = ((buckets[idxvm1]*((idxvm1+1)*width-v+1)) - (buckets[idx]*((idx+1)*width-v))) / width;
+                return (res + buckets[idx]) / ntupls;
+                //return estimateSelectivityGreater(v - 1) - estimateSelectivityGreater(v);
             case LESS_THAN:
                 return 1 - estimateSelectivityGreater(v-1);
             case LESS_THAN_OR_EQ:
