@@ -1,6 +1,7 @@
 package simpledb;
 
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 class PageInfo {
@@ -8,6 +9,7 @@ class PageInfo {
     int nReader, nWriter;
     PageInfo prev, next;
     ReentrantLock lock;
+    Condition condition;
     TransactionId exTransaction;
     ConcurrentHashMap<TransactionId, Integer> shareLockSet;
     private boolean canReclaim = false;
@@ -48,7 +50,7 @@ class PageInfo {
 
         while (nWriter != 0) {
             try {
-                lock.wait();
+                condition.await();
             } catch (InterruptedException e) {
                 continue;
             }
@@ -63,7 +65,7 @@ class PageInfo {
 
     void releaseShareLock(TransactionId tid)
     {
-        shareLockSet.remove(tid);
+        //shareLockSet.remove(tid);
         if (--nReader == 0)
             canReclaim = true;
         int cnt = shareLockSet.get(tid);
@@ -90,7 +92,7 @@ class PageInfo {
         tryRemoveShareLock(tid);
         while (nReader != 0 && exTransaction != null) {
             try {
-                lock.wait();
+                condition.await();//lock.wait();
             } catch (InterruptedException e) {
                 continue;
             }
@@ -112,8 +114,8 @@ class PageInfo {
         if (--nWriter == 0)
             canReclaim = true;
         exTransaction = null;
+        condition.signalAll();
         lock.unlock();
-        lock.notifyAll();
     }
 
     void releaseLock(TransactionId tid)
@@ -125,8 +127,8 @@ class PageInfo {
             exTransaction = null;
         } else
             releaseShareLock(tid);
+        condition.signalAll();
         lock.unlock();
-        lock.notifyAll();
     }
 
     void acquireLock(TransactionId tid, Permissions permissions)
@@ -145,6 +147,7 @@ class PageInfo {
         pageInfo.shareLockSet = new ConcurrentHashMap<>();
         pageInfo.lock = new ReentrantLock();
         pageInfo.nReader = pageInfo.nWriter = 0;
+        pageInfo.condition = pageInfo.lock.newCondition();
         return pageInfo;
     }
 }

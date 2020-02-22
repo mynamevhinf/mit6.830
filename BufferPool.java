@@ -78,7 +78,7 @@ public class BufferPool {
                 break;
 
             try {
-                condition.wait();
+                condition.await();
             } catch (InterruptedException e) {
                 continue;
             }
