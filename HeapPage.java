@@ -73,7 +73,7 @@ public class HeapPage implements Page {
             page = new HeapPage(pageId, data);
         } catch (IOException e) {
             e.printStackTrace();
-            System.exit(-1);
+            //System.exit(-1);
         }
         return page;
     }
@@ -258,9 +258,6 @@ public class HeapPage implements Page {
     public void deleteTuple(Tuple t) throws DbException {
         if (getNumEmptySlots() == numSlots)
             throw new DbException("Trying to delete a tuple from an empty page!");
-        //if (!t.getTupleDesc().equals(td))
-        //    throw new DbException("deleteTuple: tupleDesc mismatch!");
-
         //boolean willThrow = true;
         for (Tuple tuple : tuples) {
             if (tuple == null)
@@ -269,11 +266,9 @@ public class HeapPage implements Page {
                 int tupNo = tuple.getRecordId().tupleNo;
                 markSlotUsed(tupNo, false);
                 tuples[tupNo] = null;
-                //willThrow = false;
                 return;
             }
         }
-        //if (willThrow)
         throw new DbException("Trying to delete a tuple does not exist in thie page!");
     }
 
@@ -287,14 +282,15 @@ public class HeapPage implements Page {
     public void insertTuple(Tuple t) throws DbException {
         if (getNumEmptySlots() == 0)
             throw new DbException("Trying to insert tuple to a fulled page!");
-        if (!t.getTupleDesc().equals(td))
-            throw new DbException("insertTuple: tupleDesc mismatch!");
+        //if (!t.getTupleDesc().equals(td))
+        //    throw new DbException("insertTuple: tupleDesc mismatch!");
         for (int i = 0; i < numSlots; i++) {
             if (!isSlotUsed(i)) {
                 tuples[i] = t;
                 RecordId recordId = new RecordId(pid, i);
                 t.setRecordId(recordId);
                 markSlotUsed(i, true);
+                //System.out.println("i = " + i + ", " + pid.getPageNumber() + ", " + getNumEmptySlots());
                 return;
             }
         }

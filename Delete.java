@@ -50,7 +50,7 @@ public class Delete extends Operator {
                 bufferPool.deleteTuple(transactionId, t);
             } catch (IOException e) {
                 e.printStackTrace();
-                System.exit(-1);
+                // System.exit(-1);
             }
             cnt++;
         }

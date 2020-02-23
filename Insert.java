@@ -60,7 +60,7 @@ public class Insert extends Operator {
                 bufferPool.insertTuple(transactionId, tableId, t);
             } catch (IOException e) {
                 e.printStackTrace();
-                System.exit(-1);
+                //System.exit(-1);
             }
             cnt++;
         }

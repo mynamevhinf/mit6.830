@@ -1,9 +1,9 @@
 package simpledb;
 
-import javax.lang.model.element.TypeElement;
 import java.io.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * HeapFile is an implementation of a DbFile that stores a collection of tuples
@@ -21,7 +21,13 @@ public class HeapFile implements DbFile {
     TupleDesc tupleDesc;
 
     AtomicInteger version = new AtomicInteger(0);
-    AtomicInteger numPages = new AtomicInteger();
+    //AtomicInteger numPages = new AtomicInteger();
+
+    //AtomicInteger numPages = new AtomicInteger();
+    int numPages;
+    ReentrantReadWriteLock.ReadLock rLock;
+    ReentrantReadWriteLock.WriteLock wLock;
+
 
     /**
      * Constructs a heap file backed by the specified file.
@@ -33,16 +39,21 @@ public class HeapFile implements DbFile {
     public HeapFile(File f, TupleDesc td) {
         this.f = f;
         try {
-            this.rf = new RandomAccessFile(f, "rw");
+            rf = new RandomAccessFile(f, "rw");
         } catch (FileNotFoundException e) {
             System.out.println("Failed at create HeapFile!");
-            System.exit(-1);
+            //System.exit(-1);
         }
-        this.tupleDesc = td;
+
+        tupleDesc = td;
+
+        ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+        rLock = lock.readLock();
+        wLock = lock.writeLock();
 
         int len = (int) f.length();
         int pageSize = BufferPool.getPageSize();
-        this.numPages.set((len / pageSize) + (len % pageSize != 0 ? 1 : 0));
+        numPages = (len / pageSize) + (len % pageSize != 0 ? 1 : 0);
     }
 
     /**
@@ -83,8 +94,15 @@ public class HeapFile implements DbFile {
     // see DbFile.java for javadocs
     public Page readPage(PageId pid) {
         int pageNo = pid.getPageNumber();
-        if (pageNo < 0 || pageNo > numPages())
+
+        rLock.lock();
+        if (pageNo < 0 || pageNo >= numPages) {
+            wLock.unlock();
             throw new IllegalArgumentException();
+        }
+        rLock.unlock();
+
+        /// never decrease size now...
         try {
             int pageSize = BufferPool.getPageSize();
             byte[] data = new byte[pageSize];
@@ -140,7 +158,10 @@ public class HeapFile implements DbFile {
      * Returns the number of pages in this HeapFile.
      */
     public int numPages() {
-        return numPages.get();
+        rLock.lock();
+        int n = numPages;
+        rLock.unlock();
+        return n;
     }
 
     // see DbFile.java for javadocs
@@ -159,7 +180,7 @@ public class HeapFile implements DbFile {
             try {
                 page.insertTuple(t);
             } catch (DbException e) {
-                bufferPool.releaseLockOnPage(pageId, tid);
+                bufferPool.releasePage(tid, pageId);
                 continue;
             }
 
@@ -169,14 +190,11 @@ public class HeapFile implements DbFile {
             return pages;
         }
 
-        HeapPageId pageId = new HeapPageId(tableId, i);
-        HeapPage newPage = HeapPage.newEmptyPage(pageId);
-        newPage.insertTuple(t);
-        pages.add(newPage);
-        version.getAndIncrement();
-        int np = numPages.getAndIncrement() + 1;
-        rf.setLength(np * BufferPool.getPageSize());
-        return pages;
+        wLock.lock();
+        numPages++;
+        rf.setLength((numPages+1) * BufferPool.getPageSize());
+        wLock.unlock();
+        return insertTuple(tid, t);
     }
 
     // see DbFile.java for javadocs

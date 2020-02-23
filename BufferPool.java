@@ -4,11 +4,12 @@ import java.io.*;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Iterator;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * BufferPool manages the reading and writing of pages into memory from
@@ -28,7 +29,10 @@ public class BufferPool {
     ConcurrentHashMap<PageId, PageInfo> pagesMap;
 
     Condition condition;
-    ReentrantReadWriteLock rwLock;
+    ReentrantLock bufferLock;
+    DeadLockManager deadLockManager;
+
+    HashSet<TransactionId> activeTransactions = new HashSet<>();
 
     /** Bytes per page, including header. */
     private static final int DEFAULT_PAGE_SIZE = 4096;
@@ -50,10 +54,13 @@ public class BufferPool {
         //head = tail = null;
         size = 0;
         this.numPages = numPages;
-        head = PageInfo.newPageInfo(null);   /// guard
+        head = PageInfo.newPageInfo(null, null);   /// guard
         pagesMap = new ConcurrentHashMap<>();
-        rwLock = new ReentrantReadWriteLock();
-        condition = rwLock.writeLock().newCondition();
+        bufferLock = new ReentrantLock();
+        condition = bufferLock.newCondition();
+
+        deadLockManager = DeadLockManager.newDeadLockManager(this);
+        deadLockManager.start();
     }
     
     public static int getPageSize() {
@@ -70,65 +77,55 @@ public class BufferPool {
     	BufferPool.pageSize = DEFAULT_PAGE_SIZE;
     }
 
-    /// we must hold lock before calling the function!!!
-    public void waitUntilPoolNotFull() throws DbException {
-        while (size == numPages) {
-            evictPage();
-            if (size != numPages)
-                break;
+    boolean tryLockBufferPool() { return bufferLock.tryLock(); }
+    void LockBufferPool() { bufferLock.lock(); }
+    void unLockBufferPool() { bufferLock.unlock(); }
 
-            try {
-                condition.await();
-            } catch (InterruptedException e) {
-                continue;
+    public ConcurrentHashMap<PageId, PageInfo> getPagesMap() {
+        return pagesMap;
+    }
+
+    private void acquireLock(PageInfo pageInfo, TransactionId tid, Permissions permissions)
+    {
+        deadLockManager.tryLock(tid, pageInfo.getPageId(), permissions);
+        pageInfo.acquireLock(tid, permissions);
+        deadLockManager.getLock(tid);
+    }
+
+    private void releaseLock(PageInfo pageInfo, TransactionId tid)
+    {
+        pageInfo.releaseLock(tid);
+    }
+
+    boolean hasActiveTransactions() { return activeTransactions.size() != 0; }
+
+    public PageInfo getRealPageInfo(TransactionId tid, PageInfo pageInfo, PageId pageId, Permissions permissions) throws DbException {
+        bufferLock.lock();
+        activeTransactions.add(tid);
+        while (true) {
+            PageInfo existed = pagesMap.get(pageId);
+            /// what will happned if someone else has been insert the page before we get writeLock...
+            if (existed != null) {
+                bufferLock.unlock();
+                acquireLock(existed, tid, permissions);
+
+                /// it has been discard... because previous transaction abort!!!
+                bufferLock.lock();
+                PageInfo other = pagesMap.get(pageId);
+                if (other == null || other.getTimeStamp() != existed.getTimeStamp())
+                    continue;
+                accessPageInfo(other);
+                bufferLock.unlock();
+                return other;
             }
+
+            pagesMap.put(pageId, pageInfo);
+            evictPage();
+            //waitUntilPoolNotFull();
+            insertPageInfoToHead(pageInfo);
+            bufferLock.unlock();
+            return pageInfo;
         }
-    }
-
-    private void OptionInsertPage(TransactionId tid, Page page, Permissions permissions) throws DbException {
-        PageInfo pageInfo = pagesMap.get(page.getId());
-        if (pageInfo == null) {
-            pageInfo = PageInfo.newPageInfo(page);
-            pageInfo.acquireLock(tid, permissions);
-            insertPageInfoAndPage(tid, pageInfo, page.getId(), permissions);
-            return;
-        }
-
-        //accessPageInfo(pageInfo);
-    }
-
-    private void OptionInsertPageInfo(TransactionId tid, PageInfo pageInfo, Permissions permissions) throws DbException {
-        insertPageInfoAndPage(tid, pageInfo, pageInfo.page.getId(), permissions);
-    }
-
-    /// every pages must be locked before inserted!!!
-    /*
-    public void insertNewPageInfo(PageInfo pageInfo) throws DbException {
-        waitUntilPoolNotFull();
-        insertPageInfoToHead(pageInfo);
-    }
-     */
-
-    public void insertPageInfoAndPage(TransactionId tid, PageInfo pageInfo, PageId pageId, Permissions permissions) throws DbException {
-        rwLock.writeLock().lock();
-        PageInfo existed = pagesMap.get(pageId);
-        /// what will happned if someone else has been insert the page before we get writeLock...
-        if (existed != null) {
-            /// locked it in bufferPool...
-            accessPageInfo(existed);
-            //condition.signalAll();
-            rwLock.writeLock().unlock();
-            existed.acquireLock(tid, permissions);
-            return ;
-        }
-
-        pagesMap.put(pageId, pageInfo);
-
-        waitUntilPoolNotFull();
-        insertPageInfoToHead(pageInfo);
-
-        condition.signalAll();
-        rwLock.writeLock().unlock();
     }
 
     public void insertPageInfoToHead(PageInfo pageInfo)
@@ -140,17 +137,16 @@ public class BufferPool {
         size++;
     }
 
-    private void deletePageInfo(PageInfo pageInfo)
-    {
-        pageInfo.prev.next = pageInfo.next;
-        pageInfo.next.prev = pageInfo.prev;
-        pageInfo.prev = pageInfo.next = pageInfo;
-        size--;
-    }
-
     private void accessPageInfo(PageInfo pageInfo) {
-        deletePageInfo(pageInfo);
-        insertPageInfoToHead(pageInfo);
+        if (pageInfo.isInList()) {
+            pageInfo.prev.next = pageInfo.next;
+            pageInfo.next.prev = pageInfo.prev;
+            pageInfo.prev = pageInfo.next = pageInfo;
+        }
+        pageInfo.next = head;
+        pageInfo.prev = head.prev;
+        head.prev.next = pageInfo;
+        head.prev = pageInfo;
     }
 
     /**
@@ -172,18 +168,25 @@ public class BufferPool {
         throws TransactionAbortedException, DbException {
         PageInfo pageInfo = pagesMap.get(pid);
         if (pageInfo == null) {
-            Page page = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
-            pageInfo = PageInfo.newPageInfo(page);
-            pageInfo.acquireLock(tid, perm);
-
-            insertPageInfoAndPage(tid, pageInfo, pid, perm);
-            return page;
+            pageInfo = PageInfo.newPageInfo(null, pid);
+            acquireLock(pageInfo, tid, perm);
+            pageInfo = getRealPageInfo(tid, pageInfo, pid, perm);
+            if (!pageInfo.hasContent()) {
+                Page page = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
+                pageInfo.setPage(page);
+            }
+            //System.out.println("add new: " + pageInfo + ", pid " + pid.getPageNumber() + ", " + pageInfo.page.hashCode());
+            return pageInfo.page;
         }
 
-        pageInfo.acquireLock(tid, perm);
+        acquireLock(pageInfo, tid, perm);
         /// after we get the lock, it may has been evit
         /// out form buffer...
-        OptionInsertPageInfo(tid, pageInfo, perm);
+        pageInfo = getRealPageInfo(tid, pageInfo, pid, perm);
+        if (!pageInfo.hasContent()) {
+            Page page = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
+            pageInfo.setPage(page);
+        }
         return pageInfo.page;
     }
 
@@ -199,7 +202,7 @@ public class BufferPool {
     public void releasePage(TransactionId tid, PageId pid) {
         PageInfo pageInfo = pagesMap.get(pid);
         if (pageInfo != null)
-            pageInfo.releaseLock(tid);
+            releaseLock(pageInfo, tid);
     }
 
     /**
@@ -229,20 +232,23 @@ public class BufferPool {
      */
     public void transactionComplete(TransactionId tid, boolean commit)
         throws IOException {
-        rwLock.writeLock().lock();
+        bufferLock.lock();
         for (Map.Entry<PageId, PageInfo> entry : pagesMap.entrySet()) {
             PageId pageId = entry.getKey();
             PageInfo pageInfo = entry.getValue();
             if (pageInfo.isDirty() && tid.equals(pageInfo.getOnwner())) {
                 if (commit) {
+                    pageInfo.page.markDirty(false, null);
                     DbFile f = Database.getCatalog().getDatabaseFile(pageId.getTableId());
                     f.writePage(pageInfo.page);
                 } else
-                    pagesMap.remove(pageId);
+                    pageInfo.giveUpContent();
+                    //discardPage(pageId);
             }
-            entry.getValue().releaseLock(tid);
+            releasePage(tid, pageId);
         }
-        rwLock.writeLock().unlock();
+        activeTransactions.remove(tid);
+        bufferLock.unlock();
     }
 
     /**
@@ -264,11 +270,7 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         DbFile f = Database.getCatalog().getDatabaseFile(tableId);
         ArrayList<Page> pages = f.insertTuple(tid, t);
-        /// we have got lock on a existed page or it is a new page!!!
-        for (Page page : pages) {
-            page.markDirty(true, tid);
-            OptionInsertPage(tid, page, Permissions.READ_WRITE);
-        }
+        pages.get(0).markDirty(true, tid);
     }
 
     /**
@@ -289,10 +291,7 @@ public class BufferPool {
         int tableId = t.getRecordId().getPageId().getTableId();
         DbFile f = Database.getCatalog().getDatabaseFile(tableId);
         ArrayList<Page> pages = f.deleteTuple(tid, t);
-        for (Page page : pages) {
-            page.markDirty(true, tid);
-            OptionInsertPage(tid, page, Permissions.READ_WRITE);
-        }
+        pages.get(0).markDirty(true, tid);
     }
 
     /**
@@ -301,11 +300,11 @@ public class BufferPool {
      *     break simpledb if running in NO STEAL mode.
      */
     public void flushAllPages() throws IOException {
-        rwLock.writeLock().lock();
+        bufferLock.lock();
         Collection<PageInfo> pages = pagesMap.values();
         for (PageInfo pageInfo : pages)
             flushPage(pageInfo.page.getId());
-        rwLock.writeLock().unlock();
+        bufferLock.unlock();
     }
 
     /** Remove the specific page id from the buffer pool.
@@ -317,9 +316,7 @@ public class BufferPool {
         are removed from the cache so they can be reused safely
     */
     public void discardPage(PageId pid) {
-        //rwLock.writeLock().lock();
         pagesMap.remove(pid);
-        //rwLock.writeLock().unlock();
     }
 
     /**
@@ -340,14 +337,14 @@ public class BufferPool {
     /** Write all pages of the specified transaction to disk.
      */
     public void flushPages(TransactionId tid) throws IOException {
-        rwLock.writeLock().lock();
+        bufferLock.lock();
         for (Map.Entry<PageId, PageInfo> entry : pagesMap.entrySet()) {
             PageId pageId = entry.getKey();
             PageInfo pageInfo = entry.getValue();
             if (tid.equals(pageInfo.getOnwner()))
                 flushPage(pageId);
         }
-        rwLock.writeLock().unlock();
+        bufferLock.unlock();
     }
 
 
@@ -356,6 +353,8 @@ public class BufferPool {
      * Flushes the page to disk to ensure dirty pages are updated on disk.
      */
     private void evictPage() throws DbException {
+        if (size < numPages)
+            return;
 
         PageInfo prev = head;
         PageInfo removed = prev.next;
@@ -365,18 +364,17 @@ public class BufferPool {
         }
 
         if (removed == head)
-            throw new DbException("trying to reclaim old page when bufferPool is empty or all pages in buffer was using!");
+            throw new DbException("trying to reclaim old page when all pages in buffer was using!");
+
         prev.next = removed.next;
         prev.next.prev = prev;
+        removed.next = removed.prev = removed;
         size--;
 
-        pagesMap.remove(removed.page.getId());
-    }
-
-    /// have hold all locks necessarily!
-    public void releaseLockOnPage(PageId pageId, TransactionId tid)
-    {
-        PageInfo pageInfo = pagesMap.get(pageId);
-        pageInfo.releaseLock(tid);
+        if (removed.canReclaim())
+            discardPage(removed.page.getId());
+        else
+            removed.giveUpContent();
+        condition.signal();
     }
 }

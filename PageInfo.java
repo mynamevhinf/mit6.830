@@ -1,33 +1,63 @@
 package simpledb;
 
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 class PageInfo {
+    private static AtomicLong TIMESTAMP = new AtomicLong(0);
+
+    private long timeStamp = TIMESTAMP.getAndIncrement();
+
     Page page;
+    PageId pid;
     int nReader, nWriter;
     PageInfo prev, next;
     ReentrantLock lock;
     Condition condition;
     TransactionId exTransaction;
     ConcurrentHashMap<TransactionId, Integer> shareLockSet;
-    //private boolean canReclaim = false;
-    //private boolean willReclaim = false;
+
+    public PageId getPageId() {
+        return pid;
+    }
+
+    public ConcurrentHashMap<TransactionId, Integer> getShareLockSet() {
+        return shareLockSet;
+    }
+
+    public TransactionId getExTransaction() {
+        return exTransaction;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj)
+            return true;
+        if (obj == null || !(obj instanceof PageInfo))
+            return false;
+        PageInfo other = (PageInfo) obj;
+        return timeStamp == other.getTimeStamp();
+    }
+
 
     //public boolean isWillReclaim() { return willReclaim; }
     public TransactionId getOnwner() { return exTransaction; }
 
+    public long getTimeStamp() {
+        return timeStamp;
+    }
+
     //public boolean tryLockMeta() { return lock.tryLock(); }
     //public void unLockMeta() { lock.unlock(); }
 
-    public boolean isDirty() { return page.isDirty() != null; }
+    public boolean isDirty() { return page == null || page.isDirty() != null; }
 
     public boolean isHoldingPage(TransactionId tid)
     {
-        boolean flag;
         lock.lock();
-        flag = tid.equals(exTransaction) || shareLockSet.contains(tid);
+        boolean flag = tid.equals(exTransaction) || shareLockSet.contains(tid);
         lock.unlock();
         return flag;
     }
@@ -36,8 +66,8 @@ class PageInfo {
     {
         lock.lock();
 
-        /// if we have acquire ex-lock
-        if (exTransaction == tid) {
+        /// if we have hold ex-lock
+        if (tid.equals(exTransaction)) {
             lock.unlock();
             return;
         }
@@ -60,7 +90,6 @@ class PageInfo {
     void releaseShareLock(TransactionId tid)
     {
         //shareLockSet.remove(tid);
-        --nReader;
         //if (--nReader == 0)
             //canReclaim = true;
         Integer cnt = shareLockSet.get(tid);
@@ -68,9 +97,12 @@ class PageInfo {
             return;
         if (cnt == 0) {
             System.out.println("cannot unlock a lock u don't hold it!");
-            System.exit(-1);
+            cnt /= 0;
+            //System.exit(-1);
         }
-        shareLockSet.put(tid, cnt-1);
+        nReader -= cnt;
+        shareLockSet.remove(tid);
+        //shareLockSet.put(tid, cnt-1);
     }
 
     private void tryRemoveShareLock(TransactionId tid)
@@ -85,6 +117,11 @@ class PageInfo {
     private void acquireExLock(TransactionId tid)
     {
         lock.lock();
+        if (tid.equals(exTransaction)) {
+            lock.unlock();
+            return;
+        }
+
         nWriter++;
         tryRemoveShareLock(tid);
         while (nReader != 0 && exTransaction != null) {
@@ -119,10 +156,8 @@ class PageInfo {
     void releaseLock(TransactionId tid)
     {
         lock.lock();
-        if (exTransaction == tid) {
+        if (tid.equals(exTransaction)) {
             --nWriter;
-            //if (--nWriter == 0)
-            //    canReclaim = true;
             exTransaction = null;
         } else
             releaseShareLock(tid);
@@ -132,16 +167,34 @@ class PageInfo {
 
     void acquireLock(TransactionId tid, Permissions permissions)
     {
-        if (permissions == Permissions.READ_ONLY)
+        if (Permissions.READ_ONLY.equals(permissions))
             acquireShareLock(tid);
         else
             acquireExLock(tid);
     }
 
-    static PageInfo newPageInfo(Page page) //Permissions permissions, TransactionId transactionId)
+    void giveUpContent() {
+        page = null;
+    }
+
+    boolean canReclaim() {
+        return nReader + nWriter == 0;
+    }
+
+    boolean hasContent() { return page != null; }
+
+    public void setPage(Page page) {
+        this.page = page;
+        this.pid = page.getId();
+    }
+
+    boolean isInList() { return next != prev; }
+
+    static PageInfo newPageInfo(Page page, PageId pageId) //Permissions permissions, TransactionId transactionId)
     {
         PageInfo pageInfo = new PageInfo();
         pageInfo.page = page;
+        pageInfo.pid = pageId;
         pageInfo.prev = pageInfo.next = pageInfo;
         pageInfo.shareLockSet = new ConcurrentHashMap<>();
         pageInfo.lock = new ReentrantLock();

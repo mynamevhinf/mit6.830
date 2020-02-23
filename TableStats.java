@@ -154,7 +154,7 @@ public class TableStats {
             iterator.close();
         } catch (Exception e) {
             e.printStackTrace();
-            System.exit(-1);
+            //System.exit(-1);
         }
 
         Arrays.stream(histograms).forEach(o ->
