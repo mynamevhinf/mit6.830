@@ -258,8 +258,8 @@ public class HeapPage implements Page {
     public void deleteTuple(Tuple t) throws DbException {
         if (getNumEmptySlots() == numSlots)
             throw new DbException("Trying to delete a tuple from an empty page!");
-        if (!t.getTupleDesc().equals(td))
-            throw new DbException("deleteTuple: tupleDesc mismatch!");
+        //if (!t.getTupleDesc().equals(td))
+        //    throw new DbException("deleteTuple: tupleDesc mismatch!");
 
         //boolean willThrow = true;
         for (Tuple tuple : tuples) {

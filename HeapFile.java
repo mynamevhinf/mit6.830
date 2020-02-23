@@ -3,6 +3,7 @@ package simpledb;
 import javax.lang.model.element.TypeElement;
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * HeapFile is an implementation of a DbFile that stores a collection of tuples
@@ -19,7 +20,8 @@ public class HeapFile implements DbFile {
     RandomAccessFile rf;
     TupleDesc tupleDesc;
 
-    int version = 0;
+    AtomicInteger version = new AtomicInteger(0);
+    AtomicInteger numPages = new AtomicInteger();
 
     /**
      * Constructs a heap file backed by the specified file.
@@ -37,6 +39,10 @@ public class HeapFile implements DbFile {
             System.exit(-1);
         }
         this.tupleDesc = td;
+
+        int len = (int) f.length();
+        int pageSize = BufferPool.getPageSize();
+        this.numPages.set((len / pageSize) + (len % pageSize != 0 ? 1 : 0));
     }
 
     /**
@@ -62,7 +68,7 @@ public class HeapFile implements DbFile {
     }
 
     public int getVersion() {
-        return version;
+        return version.get();
     }
 
     /**
@@ -134,9 +140,7 @@ public class HeapFile implements DbFile {
      * Returns the number of pages in this HeapFile.
      */
     public int numPages() {
-        int len = (int) f.length();
-        int pageSize = BufferPool.getPageSize();
-        return (len / pageSize) + (len % pageSize != 0 ? 1 : 0);
+        return numPages.get();
     }
 
     // see DbFile.java for javadocs
@@ -147,6 +151,7 @@ public class HeapFile implements DbFile {
 
         int i;
         int tableId = getId();
+        ArrayList<Page> pages = new ArrayList<>();
         BufferPool bufferPool = Database.getBufferPool();
         for (i = 0; i < numPages(); i++) {
             HeapPageId pageId = new HeapPageId(tableId, i);
@@ -154,20 +159,24 @@ public class HeapFile implements DbFile {
             try {
                 page.insertTuple(t);
             } catch (DbException e) {
+                bufferPool.releaseLockOnPage(pageId, tid);
                 continue;
             }
 
             //page.markDirty(true, tid);
-            ArrayList<Page> pages = new ArrayList<>();
             pages.add(page);
-            version++;
+            version.getAndIncrement();
             return pages;
         }
 
         HeapPageId pageId = new HeapPageId(tableId, i);
         HeapPage newPage = HeapPage.newEmptyPage(pageId);
-        writePage(newPage);
-        return insertTuple(tid, t);
+        newPage.insertTuple(t);
+        pages.add(newPage);
+        version.getAndIncrement();
+        int np = numPages.getAndIncrement() + 1;
+        rf.setLength(np * BufferPool.getPageSize());
+        return pages;
     }
 
     // see DbFile.java for javadocs
@@ -177,14 +186,11 @@ public class HeapFile implements DbFile {
         if (!t.getTupleDesc().equals(tupleDesc))
             throw new DbException("deleteTuple: tupleDesc mismatch!");
 
-        int tableId = getId();
         BufferPool bufferPool = Database.getBufferPool();
         PageId pageId = t.getRecordId().getPageId();
-        if (tableId != pageId.getTableId())
-            throw new DbException("trying to delete a tuple which is not a member of the table!");
         HeapPage page = (HeapPage) bufferPool.getPage(tid, pageId, Permissions.READ_WRITE);
         page.deleteTuple(t);
-        version++;
+        version.getAndIncrement();
         return new ArrayList<Page>() {{ add(page); }};
     }
 

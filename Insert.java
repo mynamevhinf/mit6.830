@@ -52,13 +52,12 @@ public class Insert extends Operator {
     public void open() throws DbException, TransactionAbortedException {
         super.open();
         childs[0].open();
-
         OpIterator opIterator = childs[0];
-        DbFile f = Database.getCatalog().getDatabaseFile(tableId);
+        BufferPool bufferPool = Database.getBufferPool();
         while (opIterator.hasNext()) {
             Tuple t = opIterator.next();
             try {
-                f.insertTuple(transactionId, t);
+                bufferPool.insertTuple(transactionId, tableId, t);
             } catch (IOException e) {
                 e.printStackTrace();
                 System.exit(-1);

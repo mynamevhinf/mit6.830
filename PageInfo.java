@@ -12,22 +12,16 @@ class PageInfo {
     Condition condition;
     TransactionId exTransaction;
     ConcurrentHashMap<TransactionId, Integer> shareLockSet;
-    private boolean canReclaim = false;
+    //private boolean canReclaim = false;
     //private boolean willReclaim = false;
 
-    public void cannotReclaim() { canReclaim = false; }
     //public boolean isWillReclaim() { return willReclaim; }
     public TransactionId getOnwner() { return exTransaction; }
 
-    public boolean canReclaim()
-    {
-        if (lock.tryLock()) {
-            boolean choice =  canReclaim;
-            lock.unlock();
-            return choice;
-        }
-        return false;
-    }
+    //public boolean tryLockMeta() { return lock.tryLock(); }
+    //public void unLockMeta() { lock.unlock(); }
+
+    public boolean isDirty() { return page.isDirty() != null; }
 
     public boolean isHoldingPage(TransactionId tid)
     {
@@ -57,7 +51,7 @@ class PageInfo {
         }
 
         nReader++;
-        canReclaim = false;
+        //canReclaim = false;
         lock.unlock();
         Integer cnt = shareLockSet.get(tid);
         shareLockSet.put(tid, cnt == null ? 1 : cnt + 1);
@@ -66,9 +60,12 @@ class PageInfo {
     void releaseShareLock(TransactionId tid)
     {
         //shareLockSet.remove(tid);
-        if (--nReader == 0)
-            canReclaim = true;
-        int cnt = shareLockSet.get(tid);
+        --nReader;
+        //if (--nReader == 0)
+            //canReclaim = true;
+        Integer cnt = shareLockSet.get(tid);
+        if (cnt == null)
+            return;
         if (cnt == 0) {
             System.out.println("cannot unlock a lock u don't hold it!");
             System.exit(-1);
@@ -97,7 +94,7 @@ class PageInfo {
                 continue;
             }
         }
-        canReclaim = false;
+        //canReclaim = false;
         exTransaction = tid;
         lock.unlock();
     }
@@ -111,8 +108,9 @@ class PageInfo {
             return;
         }
 
-        if (--nWriter == 0)
-            canReclaim = true;
+        --nWriter;
+        //if (--nWriter == 0)
+        //    canReclaim = true;
         exTransaction = null;
         condition.signalAll();
         lock.unlock();
@@ -122,8 +120,9 @@ class PageInfo {
     {
         lock.lock();
         if (exTransaction == tid) {
-            if (--nWriter == 0)
-                canReclaim = true;
+            --nWriter;
+            //if (--nWriter == 0)
+            //    canReclaim = true;
             exTransaction = null;
         } else
             releaseShareLock(tid);
